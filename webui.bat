@@ -1,14 +1,13 @@
 @echo off
 
-set PYTHON=python
-set GIT=git
-set COMMANDLINE_ARGS=
-set VENV_DIR=venv
+if not defined PYTHON (set PYTHON=python)
+if not defined GIT (set GIT=git)
+if not defined COMMANDLINE_ARGS (set COMMANDLINE_ARGS=%*)
+if not defined VENV_DIR (set VENV_DIR=venv)
+if not defined TORCH_COMMAND (set TORCH_COMMAND=pip install torch==1.12.1+cu113 --extra-index-url https://download.pytorch.org/whl/cu113)
+if not defined REQS_FILE (set REQS_FILE=requirements_versions.txt)
 
 mkdir tmp 2>NUL
-
-set TORCH_COMMAND=pip install torch==1.12.1+cu113 --extra-index-url https://download.pytorch.org/whl/cu113
-set REQS_FILE=requirements_versions.txt
 
 %PYTHON% -c "" >tmp/stdout.txt 2>tmp/stderr.txt
 if %ERRORLEVEL% == 0 goto :check_git
@@ -22,7 +21,7 @@ echo Couldn't launch git
 goto :show_stdout_stderr
 
 :setup_venv
-if [%VENV_DIR%] == [] goto :skip_venv
+if [%VENV_DIR%] == [-] goto :skip_venv
 
 dir %VENV_DIR%\Scripts\Python.exe >tmp/stdout.txt 2>tmp/stderr.txt
 if %ERRORLEVEL% == 0 goto :activate_venv
@@ -35,7 +34,7 @@ echo Unable to create venv in directory %VENV_DIR%
 goto :show_stdout_stderr
 
 :activate_venv
-set PYTHON=%~dp0%VENV_DIR%\Scripts\Python.exe
+set PYTHON="%~dp0%VENV_DIR%\Scripts\Python.exe"
 %PYTHON% --version
 echo venv %PYTHON%
 goto :install_torch
@@ -86,14 +85,12 @@ if %ERRORLEVEL% == 0 goto :install_reqs
 goto :show_stdout_stderr
 
 :install_reqs
-%PYTHON% -c "import omegaconf" >tmp/stdout.txt 2>tmp/stderr.txt
+%PYTHON% -c "import omegaconf; import fonts; import timm" >tmp/stdout.txt 2>tmp/stderr.txt
 if %ERRORLEVEL% == 0 goto :make_dirs
 echo Installing requirements...
 %PYTHON% -m pip install -r %REQS_FILE% --prefer-binary >tmp/stdout.txt 2>tmp/stderr.txt
-if %ERRORLEVEL% == 0 goto :update_numpy
+if %ERRORLEVEL% == 0 goto :make_dirs
 goto :show_stdout_stderr
-:update_numpy
-%PYTHON% -m pip install -U numpy --prefer-binary >tmp/stdout.txt 2>tmp/stderr.txt
 
 :make_dirs
 mkdir repositories 2>NUL
@@ -105,11 +102,34 @@ if %ERRORLEVEL% == 0 goto :clone_transformers
 goto :show_stdout_stderr
 
 :clone_transformers
-if exist repositories\taming-transformers goto :check_model
+if exist repositories\taming-transformers goto :clone_codeformer
 echo Cloning Taming Transforming repository...
 %GIT% clone https://github.com/CompVis/taming-transformers.git repositories\taming-transformers >tmp/stdout.txt 2>tmp/stderr.txt
-if %ERRORLEVEL% == 0 goto :check_model
+if %ERRORLEVEL% == 0 goto :clone_codeformer
 goto :show_stdout_stderr
+
+:clone_codeformer
+if exist repositories\CodeFormer goto :install_codeformer_reqs
+echo Cloning CodeFormer repository...
+%GIT% clone https://github.com/sczhou/CodeFormer.git repositories\CodeFormer >tmp/stdout.txt 2>tmp/stderr.txt
+if %ERRORLEVEL% == 0 goto :install_codeformer_reqs
+goto :show_stdout_stderr
+
+:install_codeformer_reqs
+%PYTHON% -c "import lpips" >tmp/stdout.txt 2>tmp/stderr.txt
+if %ERRORLEVEL% == 0 goto :clone_blip
+echo Installing requirements for CodeFormer...
+%PYTHON% -m pip install -r repositories\CodeFormer\requirements.txt --prefer-binary >tmp/stdout.txt 2>tmp/stderr.txt
+if %ERRORLEVEL% == 0 goto :clone_blip
+goto :show_stdout_stderr
+
+:clone_blip
+if exist repositories\BLIP goto :check_model
+echo Cloning BLIP repository...
+%GIT% clone https://github.com/salesforce/BLIP.git repositories\BLIP >tmp/stdout.txt 2>tmp/stderr.txt
+if %ERRORLEVEL% NEQ 0 goto :show_stdout_stderr
+%GIT% -C repositories/BLIP checkout 48211a1594f1321b00f14c9f7a5b4813144b2fb9 >tmp/stdout.txt 2>tmp/stderr.txt
+if %ERRORLEVEL% NEQ 0 goto :show_stdout_stderr
 
 :check_model
 dir model.ckpt >tmp/stdout.txt 2>tmp/stderr.txt
@@ -125,8 +145,7 @@ echo Face fixing feature will not work.
 
 :launch
 echo Launching webui.py...
-cd repositories\stable-diffusion
-%PYTHON% ../../webui.py %COMMANDLINE_ARGS%
+%PYTHON% webui.py %COMMANDLINE_ARGS%
 pause
 exit /b
 

@@ -4,14 +4,18 @@ import yaml
 import os
 from typing import Optional
 
-import numpy as np
+# import numpy as np    # <- Is this even used?
 from pydantic import BaseModel
 from fastapi import FastAPI
 import uvicorn
+from modules.face_restoration import restore_faces
 
 from webui import *
 
 from PIL import Image
+
+# Additional imports
+import modules.images as images
 
 app = FastAPI()
 
@@ -75,6 +79,7 @@ class Txt2ImgRequest(BaseModel):
 
     prompt: Optional[str]
     negative_prompt: Optional[str]
+    prompt_style: Optional[str]
     sampler_name: Optional[str]
     steps: Optional[int]
     cfg_scale: Optional[float]
@@ -84,30 +89,42 @@ class Txt2ImgRequest(BaseModel):
     base_size: Optional[int]
     max_size: Optional[int]
     seed: Optional[str]
+    subseed: Optional[float]
+    subseed_strength: Optional[float]
+    seed_resize_from_h: Optional[int]
+    seed_resize_from_w: Optional[int]
     tiling: Optional[bool]
 
-    use_gfpgan: Optional[bool]
+    restore_faces: Optional[bool]  # Should be able to handle GFPGAN or CodeFormer
 
 class Img2ImgRequest(BaseModel):
     mode: Optional[int]
 
     src_path: str
     mask_path: Optional[str]
+    mask_mode: Optional[int]
 
     prompt: Optional[str]
+    negative_prompt: Optional[str]
+    prompt_style: Optional[str]
     sampler_name: Optional[str]
     steps: Optional[int]
     cfg_scale: Optional[float]
     denoising_strength: Optional[float]
+    denoising_strength_change_factor: Optional[float]
 
     batch_count: Optional[int]
     batch_size: Optional[int]
     base_size: Optional[int]
     max_size: Optional[int]
     seed: Optional[str]
+    subseed: Optional[float]
+    subseed_strength: Optional[float]
+    seed_resize_from_h: Optional[int]
+    seed_resize_from_w: Optional[int]
     tiling: Optional[bool]
 
-    use_gfpgan: Optional[bool]
+    restore_faces: Optional[bool]
 
     upscale_overlap: Optional[int]
     upscaler_name: Optional[str]
@@ -164,20 +181,29 @@ async def f_txt2img(req: Txt2ImgRequest):
     if req.seed is not None and not req.seed == '':
         seed = int(req.seed)
 
+    subseed = opt['subseed']
+    if req.subseed is not None and not req.subseed == '':
+        subseed = int(req.subseed)
+
     width, height = fix_aspect_ratio(req.base_size or opt['base_size'], req.max_size or opt['max_size'],
                                      req.orig_width, req.orig_height)
 
     output_images, info, html = modules.txt2img.txt2img(
         req.prompt or collect_prompt(opt),
         req.negative_prompt or opt['negative_prompt'],
+        req.prompt_style or opt['prompt_style'],
         req.steps or opt['steps'],
         sampler_index,
-        req.use_gfpgan or opt['use_gfpgan'],
+        req.restore_faces or opt['restore_faces'],
         req.tiling or opt['tiling'],
         req.batch_count or opt['n_iter'],
         req.batch_size or opt['batch_size'],
         req.cfg_scale or opt['cfg_scale'],
         seed,
+        subseed,
+        req.subseed_strength or opt['subseed_strength'],
+        req.seed_resize_from_h or opt['seed_resize_from_h'],
+        req.seed_resize_from_w or opt['seed_resize_from_w'],
         height,
         width,
         0
@@ -204,6 +230,18 @@ async def f_img2img(req: Img2ImgRequest):
     if req.seed is not None and not req.seed == '':
         seed = int(req.seed)
 
+    subseed = opt['subseed']
+    if req.subseed is not None and not req.subseed == '':
+        subseed = int(req.subseed)
+
+    # Hardcode mask_mode to config file for now TODO: Implement masking modes
+    # 1 - inpaint masked, 0 - inpaint not masked
+    # mask_mode = 1
+    # req.mask_mode = mask_mode
+
+    # TODO: Add krita options for inpainting_fill (Masked content)
+    # 0 - fill, 1 - original, 2 - latent noise, 3 - latent nothing
+
     mode = req.mode or opt['mode']
 
     image = Image.open(req.src_path)
@@ -227,20 +265,29 @@ async def f_img2img(req: Img2ImgRequest):
 
     output_images, info, html = modules.img2img.img2img(
         req.prompt or collect_prompt(opt),
+        req.negative_prompt or opt['negative_prompt'],
+        req.prompt_style or opt['prompt_style'],
         image,
         {"image": image, "mask": mask},
+        mask,
+        req.mask_mode or opt['mask_mode'],
         req.steps or opt['steps'],
         sampler_index,
         req.mask_blur or opt['mask_blur'],
         req.inpainting_fill or opt['inpainting_fill'],
-        req.use_gfpgan or opt['use_gfpgan'],
+        req.restore_faces or opt['restore_faces'],
         req.tiling or opt['tiling'],
         mode,
         req.batch_count or opt['n_iter'],
         req.batch_size or opt['batch_size'],
         req.cfg_scale or opt['cfg_scale'],
         req.denoising_strength or opt['denoising_strength'],
+        req.denoising_strength_change_factor or opt['denoising_strength_change_factor'],
         seed,
+        subseed,
+        req.subseed_strength or opt['subseed_strength'],
+        req.seed_resize_from_h or opt['seed_resize_from_h'],
+        req.seed_resize_from_w or opt['seed_resize_from_w'],
         height,
         width,
         opt['resize_mode'],
@@ -277,7 +324,8 @@ async def f_upscale(req: UpscaleRequest):
     image = Image.open(req.src_path).convert('RGB')
     orig_width, orig_height = image.size
 
-    upscaler_index = get_upscaler_index(req.upscaler_name or opt['upscaler_name'])
+    # upscaler_index = get_upscaler_index(req.upscaler_name or opt['upscaler_name'])
+    upscaler_index = get_upscaler_index(opt['upscaler_name'])
     upscaler = shared.sd_upscalers[upscaler_index]
 
     if upscaler.name == 'None':
@@ -298,7 +346,8 @@ async def f_upscale(req: UpscaleRequest):
 
 
 def main():
-    uvicorn.run("krita_server:app", host="127.0.0.1", port=8000, log_level="info")
+    # uvicorn.run("krita_server:app", host="127.0.0.1", port=8000, log_level="info")
+    uvicorn.run("krita_server:app", host="192.168.3.21", port=8000, log_level="debug")
 
 
 if __name__ == "__main__":

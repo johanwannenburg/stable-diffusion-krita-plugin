@@ -2,7 +2,7 @@
 
 set PYTHON=python
 set GIT=git
-set COMMANDLINE_ARGS=
+set COMMANDLINE_ARGS=--medvram --opt-split-attention
 set VENV_DIR=venv
 
 mkdir tmp 2>NUL
@@ -111,6 +111,21 @@ echo Cloning Taming Transforming repository...
 if %ERRORLEVEL% == 0 goto :check_model
 goto :show_stdout_stderr
 
+:clone_codeformer
+if exist repositories\CodeFormer goto :install_codeformer_reqs
+echo Cloning CodeFormer repository...
+%GIT% clone https://github.com/sczhou/CodeFormer.git repositories\CodeFormer >tmp/stdout.txt 2>tmp/stderr.txt
+if %ERRORLEVEL% == 0 goto :install_codeformer_reqs
+goto :show_stdout_stderr
+
+:install_codeformer_reqs
+%PYTHON% -c "import lpips" >tmp/stdout.txt 2>tmp/stderr.txt
+if %ERRORLEVEL% == 0 goto :check_model
+echo Installing requirements for CodeFormer...
+%PYTHON% -m pip install -r repositories\CodeFormer\requirements.txt --prefer-binary >tmp/stdout.txt 2>tmp/stderr.txt
+if %ERRORLEVEL% == 0 goto :check_model
+goto :show_stdout_stderr
+
 :check_model
 dir model.ckpt >tmp/stdout.txt 2>tmp/stderr.txt
 if %ERRORLEVEL% == 0 goto :check_gfpgan
@@ -124,7 +139,7 @@ echo GFPGAN not found: you need to place GFPGANv1.3.pth file into same directory
 echo Face fixing feature will not work.
 
 :launch
-echo Launching webui.py...
+echo Launching krita_server.py...
 cd repositories\stable-diffusion
 %PYTHON% ../../krita_server.py %COMMANDLINE_ARGS%
 pause

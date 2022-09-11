@@ -2,17 +2,22 @@
 txt2img:
   prompts: "dog"
   negative_prompt: ""
+  prompt_style: "None"
   sampler_name: k_euler_a
   steps: 20
   cfg_scale: 12.0
   n_iter: 1
   seed: -1
+  subseed: -1
+  subseed_strength: 0
+  seed_resize_from_h: -1
+  seed_resize_from_w: -1
   base_size: 512
   max_size: 704
   batch_size: 1
   tiling: false
 
-  use_gfpgan: false
+  restore_faces: false
   use_realesrgan: false
   realesrgan_model_name: RealESRGAN_x4plus_anime_6B
   sample_path: '../../outputs/krita-out'
@@ -21,32 +26,40 @@ img2img:
   mode: 0 # 0 - default, 1 - inpaint, 3 - upscale, 2 - loopback (unsupported)
 
   prompts: "dog"
+  negative_prompt: ""
+  prompt_style: "None"
+  mask_mode: 1 # 1 - inpaint masked, 0 - inpaint not masked
   sampler_name: k_euler_a
   steps: 50
   cfg_scale: 12.0
   denoising_strength: 0.35
+  denoising_strength_change_factor: 1.0
   n_iter: 1
   seed: -1
+  subseed: -1
+  subseed_strength: 0
+  seed_resize_from_h: -1
+  seed_resize_from_w: -1
   base_size: 512
   max_size: 704
   batch_size: 1
   tiling: false
 
   upscale_overlap: 64
-  upscaler_name: "None" # None, Lanczos, RealESRGAN
+  upscaler_name: "None" # Options: None, Lanczos, Real-ESRGAN 4x plus, Real-ESRGAN 4x plus anime 6B, Real-ESRGAN 2x plus
 
-  inpainting_fill: 0
+  inpainting_fill: 0  # 0 - fill, 1 - original, 2 - latent noise, 3 - latent nothing
   inpaint_full_res: false
   mask_blur: 0
 
-  use_gfpgan: false
+  restore_faces: false
   use_realesrgan: false
   realesrgan_model_name: RealESRGAN_x4plus_anime_6B
   resize_mode: 1
   sample_path: '../../outputs/krita-out'
 
 upscale:
-  upscaler_name: None
+  upscaler_name: "Real-ESRGAN 4x plus"    # Options: None, Lanczos, Real-ESRGAN 4x plus, Real-ESRGAN 4x plus anime 6B, Real-ESRGAN 2x plus
   sample_path: '../../outputs/krita-out'
   downscale_first: false
 
