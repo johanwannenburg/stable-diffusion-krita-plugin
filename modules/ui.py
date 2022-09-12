@@ -228,17 +228,17 @@ def create_seed_inputs():
     return seed, subseed, subseed_strength, seed_resize_from_h, seed_resize_from_w
 
 
-def add_style(style_name, text):
-    if style_name is None:
+def add_style(name: str, prompt: str, negative_prompt: str):
+    if name is None:
         return [gr_show(), gr_show()]
 
-    style = modules.styles.PromptStyle(style_name, text)
-
-    modules.styles.save_style(shared.styles_filename, style)
-
+    style = modules.styles.PromptStyle(name, prompt, negative_prompt)
     shared.prompt_styles[style.name] = style
+    # Save all loaded prompt styles: this allows us to update the storage format in the future more easily, because we
+    # reserialize all styles every time we save them
+    modules.styles.save_styles(shared.styles_filename, shared.prompt_styles.values())
 
-    update = {"visible": True, "choices": [k for k, v in shared.prompt_styles.items()], "__type__": "update"}
+    update = {"visible": True, "choices": list(shared.prompt_styles), "__type__": "update"}
     return [update, update]
 
 
@@ -251,7 +251,7 @@ def create_ui(txt2img, img2img, run_extras, run_pnginfo):
     with gr.Blocks(analytics_enabled=False) as txt2img_interface:
         with gr.Row(elem_id="toprow"):
             txt2img_prompt = gr.Textbox(label="Prompt", elem_id="txt2img_prompt", show_label=False, placeholder="Prompt", lines=1)
-            negative_prompt = gr.Textbox(label="Negative prompt", elem_id="txt2img_negative_prompt", show_label=False, placeholder="Negative prompt", lines=1)
+            txt2img_negative_prompt = gr.Textbox(label="Negative prompt", elem_id="txt2img_negative_prompt", show_label=False, placeholder="Negative prompt", lines=1)
             txt2img_prompt_style = gr.Dropdown(label="Style", show_label=False, elem_id="style_index", choices=[k for k, v in shared.prompt_styles.items()], value=next(iter(shared.prompt_styles.keys())), visible=len(shared.prompt_styles) > 1)
             roll = gr.Button('Roll', elem_id="txt2img_roll", visible=len(shared.artist_db.artists) > 0)
             submit = gr.Button('Generate', elem_id="txt2img_generate", variant='primary')
@@ -270,7 +270,7 @@ def create_ui(txt2img, img2img, run_extras, run_pnginfo):
                     batch_count = gr.Slider(minimum=1, maximum=cmd_opts.max_batch_count, step=1, label='Batch count', value=1)
                     batch_size = gr.Slider(minimum=1, maximum=8, step=1, label='Batch size', value=1)
 
-                cfg_scale = gr.Slider(minimum=1.0, maximum=15.0, step=0.5, label='CFG Scale', value=7.0)
+                cfg_scale = gr.Slider(minimum=1.0, maximum=30.0, step=0.5, label='CFG Scale', value=7.0)
 
                 with gr.Group():
                     height = gr.Slider(minimum=64, maximum=2048, step=64, label="Height", value=512)
@@ -308,7 +308,7 @@ def create_ui(txt2img, img2img, run_extras, run_pnginfo):
                 _js="submit",
                 inputs=[
                     txt2img_prompt,
-                    negative_prompt,
+                    txt2img_negative_prompt,
                     txt2img_prompt_style,
                     steps,
                     sampler_index,
@@ -372,7 +372,7 @@ def create_ui(txt2img, img2img, run_extras, run_pnginfo):
     with gr.Blocks(analytics_enabled=False) as img2img_interface:
         with gr.Row(elem_id="toprow"):
             img2img_prompt = gr.Textbox(label="Prompt", elem_id="img2img_prompt", show_label=False, placeholder="Prompt", lines=1)
-            negative_prompt = gr.Textbox(label="Negative prompt", elem_id="img2img_negative_prompt", show_label=False, placeholder="Negative prompt", lines=1)
+            img2img_negative_prompt = gr.Textbox(label="Negative prompt", elem_id="img2img_negative_prompt", show_label=False, placeholder="Negative prompt", lines=1)
             img2img_prompt_style = gr.Dropdown(label="Style", show_label=False, elem_id="style_index", choices=[k for k, v in shared.prompt_styles.items()], value=next(iter(shared.prompt_styles.keys())), visible=len(shared.prompt_styles) > 1)
             img2img_interrogate = gr.Button('Interrogate', elem_id="img2img_interrogate", variant='primary')
             submit = gr.Button('Generate', elem_id="img2img_generate", variant='primary')
@@ -413,7 +413,7 @@ def create_ui(txt2img, img2img, run_extras, run_pnginfo):
                     batch_size = gr.Slider(minimum=1, maximum=8, step=1, label='Batch size', value=1)
 
                 with gr.Group():
-                    cfg_scale = gr.Slider(minimum=1.0, maximum=15.0, step=0.5, label='CFG Scale', value=7.0)
+                    cfg_scale = gr.Slider(minimum=1.0, maximum=30.0, step=0.5, label='CFG Scale', value=7.0)
                     denoising_strength = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, label='Denoising strength', value=0.75)
                     denoising_strength_change_factor = gr.Slider(minimum=0.9, maximum=1.1, step=0.01, label='Denoising strength change factor', value=1, visible=False)
 
@@ -441,7 +441,6 @@ def create_ui(txt2img, img2img, run_extras, run_pnginfo):
                         img2img_save_style = gr.Button('Save prompt as style')
 
                 progressbar = gr.HTML(elem_id="progressbar")
-                style_dummpy = gr.Textbox(visible=False)
 
                 with gr.Group():
                     html_info = gr.HTML()
@@ -510,7 +509,7 @@ def create_ui(txt2img, img2img, run_extras, run_pnginfo):
                 _js="submit",
                 inputs=[
                     img2img_prompt,
-                    negative_prompt,
+                    img2img_negative_prompt,
                     img2img_prompt_style,
                     init_img,
                     init_img_with_mask,
@@ -580,11 +579,14 @@ def create_ui(txt2img, img2img, run_extras, run_pnginfo):
                 ]
             )
 
-            for button, propmt in zip([txt2img_save_style, img2img_save_style], [txt2img_prompt, img2img_prompt]):
+            dummy_component = gr.Label(visible=False)
+            for button, (prompt, negative_prompt) in zip([txt2img_save_style, img2img_save_style], [(txt2img_prompt, txt2img_negative_prompt), (img2img_prompt, img2img_negative_prompt)]):
                 button.click(
                     fn=add_style,
                     _js="ask_for_style_name",
-                    inputs=[style_dummpy, propmt],
+                    # Have to pass empty dummy component here, because the JavaScript and Python function have to accept
+                    # the same number of parameters, but we only know the style-name after the JavaScript prompt
+                    inputs=[dummy_component, prompt, negative_prompt],
                     outputs=[txt2img_prompt_style, img2img_prompt_style],
                 )
 
@@ -659,19 +661,20 @@ def create_ui(txt2img, img2img, run_extras, run_pnginfo):
         info = opts.data_labels[key]
         t = type(info.default)
 
+        args = info.component_args() if callable(info.component_args) else info.component_args
+
         if info.component is not None:
-            args = info.component_args() if callable(info.component_args) else info.component_args
-            item = info.component(label=info.label, value=fun, **(args or {}))
+            comp = info.component
         elif t == str:
-            item = gr.Textbox(label=info.label, value=fun, lines=1)
+            comp = gr.Textbox
         elif t == int:
-            item = gr.Number(label=info.label, value=fun)
+            comp = gr.Number
         elif t == bool:
-            item = gr.Checkbox(label=info.label, value=fun)
+            comp = gr.Checkbox
         else:
             raise Exception(f'bad options item type: {str(t)} for key {key}')
 
-        return item
+        return comp(label=info.label, value=fun, **(args or {}))
 
     components = []
     keys = list(opts.data_labels.keys())
@@ -682,6 +685,10 @@ def create_ui(txt2img, img2img, run_extras, run_pnginfo):
         up = []
 
         for key, value, comp in zip(opts.data_labels.keys(), args, components):
+            comp_args = opts.data_labels[key].component_args
+            if comp_args and isinstance(comp_args, dict) and comp_args.get('visible') is False:
+                continue
+
             opts.data[key] = value
             up.append(comp.update(value=value))
 

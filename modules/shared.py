@@ -13,8 +13,6 @@ from modules.devices import get_optimal_device
 import modules.styles
 import modules.interrogate
 
-config_filename = "config.json"
-
 sd_model_file = os.path.join(script_path, 'model.ckpt')
 if not os.path.exists(sd_model_file):
     sd_model_file = "models/ldm/stable-diffusion-v1/model.ckpt"
@@ -42,6 +40,9 @@ parser.add_argument("--listen", action='store_true', help="launch gradio with 0.
 parser.add_argument("--port", type=int, help="launch gradio with given server port, you need root/admin rights for ports < 1024, defaults to 7860 if available", default=None)
 parser.add_argument("--show-negative-prompt", action='store_true', help="does not do anything", default=False)
 parser.add_argument("--ui-config-file", type=str, help="filename to use for ui configuration", default=os.path.join(script_path, 'ui-config.json'))
+parser.add_argument("--hide-ui-dir-config", action='store_true', help="hide directory configuration from webui", default=False)
+parser.add_argument("--ui-settings-file", type=str, help="filename to use for ui settings", default=os.path.join(script_path, 'config.json'))
+parser.add_argument("--gradio-debug",  action='store_true', help="launch gradio with --debug option")
 
 cmd_opts = parser.parse_args()
 
@@ -50,6 +51,7 @@ device = get_optimal_device()
 batch_cond_uncond = cmd_opts.always_batch_cond_uncond or not (cmd_opts.lowvram or cmd_opts.medvram)
 parallel_processing_allowed = not cmd_opts.lowvram and not cmd_opts.medvram
 
+config_filename = cmd_opts.ui_settings_file
 
 class State:
     interrupted = False
@@ -91,18 +93,20 @@ class Options:
             self.component_args = component_args
 
     data = None
+    hide_dirs = {"visible": False} if cmd_opts.hide_ui_dir_config else None
     data_labels = {
-        "outdir_samples": OptionInfo("", "Output directory for images; if empty, defaults to two directories below"),
-        "outdir_txt2img_samples": OptionInfo("outputs/txt2img-images", 'Output directory for txt2img images'),
-        "outdir_img2img_samples": OptionInfo("outputs/img2img-images", 'Output directory for img2img images'),
-        "outdir_extras_samples": OptionInfo("outputs/extras-images", 'Output directory for images from extras tab'),
-        "outdir_grids": OptionInfo("", "Output directory for grids; if empty, defaults to two directories below"),
-        "outdir_txt2img_grids": OptionInfo("outputs/txt2img-grids", 'Output directory for txt2img grids'),
-        "outdir_img2img_grids": OptionInfo("outputs/img2img-grids", 'Output directory for img2img grids'),
+        "samples_filename_format": OptionInfo("", "Samples filename format using following tags: [STEPS],[CFG],[PROMPT],[PROMPT_SPACES],[WIDTH],[HEIGHT],[SAMPLER],[SEED]. Leave blank for default."),
+        "outdir_samples": OptionInfo("", "Output directory for images; if empty, defaults to two directories below", component_args=hide_dirs),
+        "outdir_txt2img_samples": OptionInfo("outputs/txt2img-images", 'Output directory for txt2img images', component_args=hide_dirs),
+        "outdir_img2img_samples": OptionInfo("outputs/img2img-images", 'Output directory for img2img images', component_args=hide_dirs),
+        "outdir_extras_samples": OptionInfo("outputs/extras-images", 'Output directory for images from extras tab', component_args=hide_dirs),
+        "outdir_grids": OptionInfo("", "Output directory for grids; if empty, defaults to two directories below", component_args=hide_dirs),
+        "outdir_txt2img_grids": OptionInfo("outputs/txt2img-grids", 'Output directory for txt2img grids', component_args=hide_dirs),
+        "outdir_img2img_grids": OptionInfo("outputs/img2img-grids", 'Output directory for img2img grids', component_args=hide_dirs),
         "save_to_dirs": OptionInfo(False, "When writing images, create a directory with name derived from the prompt"),
         "grid_save_to_dirs": OptionInfo(False, "When writing grids, create a directory with name derived from the prompt"),
         "save_to_dirs_prompt_len": OptionInfo(10, "When using above, how many words from prompt to put into directory name", gr.Slider, {"minimum": 1, "maximum": 32, "step": 1}),
-        "outdir_save": OptionInfo("log/images", "Directory for saving images using the Save button"),
+        "outdir_save": OptionInfo("log/images", "Directory for saving images using the Save button", component_args=hide_dirs),
         "samples_save": OptionInfo(True, "Save indiviual samples"),
         "samples_format": OptionInfo('png', 'File format for individual samples'),
         "grid_save": OptionInfo(True, "Save image grids"),
@@ -126,11 +130,12 @@ class Options:
         "multiple_tqdm": OptionInfo(True, "Add a second progress bar to the console that shows progress for an entire job. Broken in PyCharm console."),
         "face_restoration_model": OptionInfo(None, "Face restoration model", gr.Radio, lambda: {"choices": [x.name() for x in face_restorers]}),
         "code_former_weight": OptionInfo(0.5, "CodeFormer weight parameter; 0 = maximum effect; 1 = minimum effect", gr.Slider, {"minimum": 0, "maximum": 1, "step": 0.01}),
-        "interrogate_keep_models_in_memory": OptionInfo(True, "Interrogate: keep models in VRAM"),
+        "interrogate_keep_models_in_memory": OptionInfo(False, "Interrogate: keep models in VRAM"),
         "interrogate_use_builtin_artists": OptionInfo(True, "Interrogate: use artists from artists.csv"),
         "interrogate_clip_num_beams": OptionInfo(1, "Interrogate: num_beams for BLIP", gr.Slider, {"minimum": 1, "maximum": 16, "step": 1}),
         "interrogate_clip_min_length": OptionInfo(24, "Interrogate: minimum descripton length (excluding artists, etc..)", gr.Slider, {"minimum": 1, "maximum": 128, "step": 1}),
         "interrogate_clip_max_length": OptionInfo(48, "Interrogate: maximum descripton length", gr.Slider, {"minimum": 1, "maximum": 256, "step": 1}),
+        "interrogate_clip_dict_limit": OptionInfo(1500, "Interrogate: maximum number of lines in text file (0 = No limit)"),
     }
 
     def __init__(self):
