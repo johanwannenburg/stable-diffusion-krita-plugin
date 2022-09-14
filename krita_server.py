@@ -1,3 +1,5 @@
+import contextlib
+import threading
 import math
 import time
 import yaml
@@ -344,11 +346,31 @@ async def f_upscale(req: UpscaleRequest):
     print(f"finished: {output}")
     return {"output": output}
 
+class Server(uvicorn.Server):
+    def install_signal_handlers(self):
+        pass
 
-def main():
+    @contextlib.contextmanager
+    def run_in_thread(self):
+        thread = threading.Thread(target=self.run)
+        thread.start()
+        try:
+            while not self.started:
+                time.sleep(1e-3)
+            yield
+        finally:
+            self.should_exit = True
+            thread.join()
+
+
+def start():
     # uvicorn.run("krita_server:app", host="127.0.0.1", port=8000, log_level="info")
-    uvicorn.run("krita_server:app", host="192.168.3.21", port=8000, log_level="debug")
+    config = uvicorn.Config("krita_server:app", host="192.168.3.21", port=8000, log_level="info")
+    server = Server(config=config)
+
+    with server.run_in_thread():
+        webui()
 
 
 if __name__ == "__main__":
-    main()
+    start()
