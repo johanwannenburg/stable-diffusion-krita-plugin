@@ -3,6 +3,7 @@ txt2img:
   prompts: "dog"
   negative_prompt: ""
   prompt_style: "None"
+  prompt_style2: "None"
   sampler_name: k_euler_a
   steps: 20
   cfg_scale: 12.0
@@ -28,6 +29,7 @@ img2img:
   prompts: "dog"
   negative_prompt: ""
   prompt_style: "None"
+  prompt_style2: "None"
   mask_mode: 1 # 1 - inpaint masked, 0 - inpaint not masked
   sampler_name: k_euler_a
   steps: 50

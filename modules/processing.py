@@ -8,6 +8,8 @@ import torch
 import numpy as np
 from PIL import Image, ImageFilter, ImageOps
 import random
+import cv2
+from skimage import exposure
 
 import modules.sd_hijack
 from modules import devices
@@ -19,21 +21,39 @@ import modules.face_restoration
 import modules.images as images
 import modules.styles
 
+
 # some of those options should not be changed at all because they would break the model, so I removed them from options.
 opt_C = 4
 opt_f = 8
 
 
+def setup_color_correction(image):
+    correction_target = cv2.cvtColor(np.asarray(image.copy()), cv2.COLOR_RGB2LAB)
+    return correction_target
+
+
+def apply_color_correction(correction, image):
+    image = Image.fromarray(cv2.cvtColor(exposure.match_histograms(
+        cv2.cvtColor(
+            np.asarray(image),
+            cv2.COLOR_RGB2LAB
+        ),
+        correction,
+        channel_axis=2
+    ), cv2.COLOR_LAB2RGB).astype("uint8"))
+
+    return image
+
 
 class StableDiffusionProcessing:
-    def __init__(self, sd_model=None, outpath_samples=None, outpath_grids=None, prompt="", prompt_style="None", seed=-1, subseed=-1, subseed_strength=0, seed_resize_from_h=-1, seed_resize_from_w=-1, sampler_index=0, batch_size=1, n_iter=1, steps=50, cfg_scale=7.0, width=512, height=512, restore_faces=False, tiling=False, do_not_save_samples=False, do_not_save_grid=False, extra_generation_params=None, overlay_images=None, negative_prompt=None):
+    def __init__(self, sd_model=None, outpath_samples=None, outpath_grids=None, prompt="", styles=None, seed=-1, subseed=-1, subseed_strength=0, seed_resize_from_h=-1, seed_resize_from_w=-1, sampler_index=0, batch_size=1, n_iter=1, steps=50, cfg_scale=7.0, width=512, height=512, restore_faces=False, tiling=False, do_not_save_samples=False, do_not_save_grid=False, extra_generation_params=None, overlay_images=None, negative_prompt=None):
         self.sd_model = sd_model
         self.outpath_samples: str = outpath_samples
         self.outpath_grids: str = outpath_grids
         self.prompt: str = prompt
         self.prompt_for_display: str = None
         self.negative_prompt: str = (negative_prompt or "")
-        self.prompt_style: str = prompt_style
+        self.styles: str = styles
         self.seed: int = seed
         self.subseed: int = subseed
         self.subseed_strength: float = subseed_strength
@@ -53,6 +73,7 @@ class StableDiffusionProcessing:
         self.extra_generation_params: dict = extra_generation_params
         self.overlay_images = overlay_images
         self.paste_to = None
+        self.color_corrections = None
 
     def init(self, seed):
         pass
@@ -65,6 +86,7 @@ class Processed:
     def __init__(self, p: StableDiffusionProcessing, images_list, seed, info):
         self.images = images_list
         self.prompt = p.prompt
+        self.negative_prompt = p.negative_prompt
         self.seed = seed
         self.info = info
         self.width = p.width
@@ -76,6 +98,7 @@ class Processed:
     def js(self):
         obj = {
             "prompt": self.prompt if type(self.prompt) != list else self.prompt[0],
+            "negative_prompt": self.negative_prompt if type(self.negative_prompt) != list else self.negative_prompt[0],
             "seed": int(self.seed if type(self.seed) != list else self.seed[0]),
             "width": self.width,
             "height": self.height,
@@ -104,15 +127,14 @@ def create_random_tensors(shape, seeds, subseeds=None, subseed_strength=0.0, see
         subnoise = None
         if subseeds is not None:
             subseed = 0 if i >= len(subseeds) else subseeds[i]
-            torch.manual_seed(subseed)
-            subnoise = torch.randn(noise_shape, device=shared.device)
+
+            subnoise = devices.randn(subseed, noise_shape)
 
         # randn results depend on device; gpu and cpu get different results for same seed;
         # the way I see it, it's better to do this on CPU, so that everyone gets same result;
         # but the original script had it like this, so I do not dare change it for now because
         # it will break everyone's seeds.
-        torch.manual_seed(seed)
-        noise = torch.randn(noise_shape, device=shared.device)
+        noise = devices.randn(seed, noise_shape)
 
         if subnoise is not None:
             #noise = subnoise * subseed_strength + noise * (1 - subseed_strength)
@@ -120,12 +142,8 @@ def create_random_tensors(shape, seeds, subseeds=None, subseed_strength=0.0, see
 
         if noise_shape != shape:
             #noise = torch.nn.functional.interpolate(noise.unsqueeze(1), size=shape[1:], mode="bilinear").squeeze()
-            # noise_shape = (64, 80)
-            # shape = (64, 72)
-
-            torch.manual_seed(seed)
-            x = torch.randn(shape, device=shared.device)
-            dx = (shape[2] - noise_shape[2]) // 2 # -4
+            x = devices.randn(seed, shape)
+            dx = (shape[2] - noise_shape[2]) // 2
             dy = (shape[1] - noise_shape[1]) // 2
             w = noise_shape[2] if dx >= 0 else noise_shape[2] + 2 * dx
             h = noise_shape[1] if dy >= 0 else noise_shape[1] + 2 * dy
@@ -164,7 +182,7 @@ def process_images(p: StableDiffusionProcessing) -> Processed:
 
     comments = []
 
-    modules.styles.apply_style(p, shared.prompt_styles[p.prompt_style])
+    shared.prompt_styles.apply_styles(p)
 
     if type(p.prompt) == list:
         all_prompts = p.prompt
@@ -174,7 +192,7 @@ def process_images(p: StableDiffusionProcessing) -> Processed:
     if type(p.seed) == list:
         all_seeds = p.seed
     else:
-        all_seeds = [int(p.seed + x) for x in range(len(all_prompts))]
+        all_seeds = [int(p.seed + (x if p.subseed_strength == 0 else 0)) for x in range(len(all_prompts))]
 
     if type(p.subseed) == list:
         all_subseeds = p.subseed
@@ -191,11 +209,13 @@ def process_images(p: StableDiffusionProcessing) -> Processed:
             "Seed": all_seeds[index],
             "Face restoration": (opts.face_restoration_model if p.restore_faces else None),
             "Size": f"{p.width}x{p.height}",
+            "Model hash": (None if not opts.add_model_hash_to_info or not shared.sd_model_hash else shared.sd_model_hash),
             "Batch size": (None if p.batch_size < 2 else p.batch_size),
             "Batch pos": (None if p.batch_size < 2 else position_in_batch),
             "Variation seed": (None if p.subseed_strength == 0 else all_subseeds[index]),
             "Variation seed strength": (None if p.subseed_strength == 0 else p.subseed_strength),
             "Seed resize from": (None if p.seed_resize_from_w == 0 or p.seed_resize_from_h == 0 else f"{p.seed_resize_from_w}x{p.seed_resize_from_h}"),
+            "Denoising strength": getattr(p, 'denoising_strength', None),
         }
 
         if p.extra_generation_params is not None:
@@ -249,16 +269,26 @@ def process_images(p: StableDiffusionProcessing) -> Processed:
             x_samples_ddim = p.sd_model.decode_first_stage(samples_ddim)
             x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
 
+            if opts.filter_nsfw:
+                import modules.safety as safety
+                x_samples_ddim = modules.safety.censor_batch(x_samples_ddim)
+
             for i, x_sample in enumerate(x_samples_ddim):
                 x_sample = 255. * np.moveaxis(x_sample.cpu().numpy(), 0, 2)
                 x_sample = x_sample.astype(np.uint8)
 
                 if p.restore_faces:
+                    if opts.save and not p.do_not_save_samples and opts.save_images_before_face_restoration:
+                        images.save_image(Image.fromarray(x_sample), p.outpath_samples, "", seeds[i], prompts[i], opts.samples_format, info=infotext(n, i), p=p)
+
                     devices.torch_gc()
 
                     x_sample = modules.face_restoration.restore_faces(x_sample)
 
                 image = Image.fromarray(x_sample)
+
+                if p.color_corrections is not None and i < len(p.color_corrections):
+                    image = apply_color_correction(p.color_corrections[i], image)
 
                 if p.overlay_images is not None and i < len(p.overlay_images):
                     overlay = p.overlay_images[i]
@@ -275,23 +305,21 @@ def process_images(p: StableDiffusionProcessing) -> Processed:
                     image = image.convert('RGB')
 
                 if opts.samples_save and not p.do_not_save_samples:
-                    images.save_image(image, p.outpath_samples, "", seeds[i], prompts[i], opts.samples_format, info=infotext(n, i), process_info = Processed(p, output_images, all_seeds[0], infotext()))
+                    images.save_image(image, p.outpath_samples, "", seeds[i], prompts[i], opts.samples_format, info=infotext(n, i), p=p)
 
                 output_images.append(image)
 
             state.nextjob()
 
         unwanted_grid_because_of_img_count = len(output_images) < 2 and opts.grid_only_if_multiple
-        if not p.do_not_save_grid and not unwanted_grid_because_of_img_count:
-            return_grid = opts.return_grid
-
+        if (opts.return_grid or opts.grid_save) and not p.do_not_save_grid and not unwanted_grid_because_of_img_count:
             grid = images.image_grid(output_images, p.batch_size)
 
-            if return_grid:
+            if opts.return_grid:
                 output_images.insert(0, grid)
 
             if opts.grid_save:
-                images.save_image(grid, p.outpath_grids, "grid", all_seeds[0], all_prompts[0], opts.grid_format, info=infotext(), short_filename=not opts.grid_extended_filename)
+                images.save_image(grid, p.outpath_grids, "grid", all_seeds[0], all_prompts[0], opts.grid_format, info=infotext(), short_filename=not opts.grid_extended_filename, p=p)
 
     devices.torch_gc()
     return Processed(p, output_images, all_seeds[0], infotext())
@@ -407,13 +435,14 @@ class StableDiffusionProcessingImg2Img(StableDiffusionProcessing):
             else:
                 self.image_mask = images.resize_image(self.resize_mode, self.image_mask, self.width, self.height)
                 np_mask = np.array(self.image_mask)
-                np_mask = np.clip((np_mask.astype(np.float)) * 2, 0, 255).astype(np.uint8)
+                np_mask = np.clip((np_mask.astype(np.float32)) * 2, 0, 255).astype(np.uint8)
                 self.mask_for_overlay = Image.fromarray(np_mask)
 
             self.overlay_images = []
 
         latent_mask = self.latent_mask if self.latent_mask is not None else self.image_mask
 
+        self.color_corrections = []
         imgs = []
         for img in self.init_images:
             image = img.convert("RGB")
@@ -434,6 +463,9 @@ class StableDiffusionProcessingImg2Img(StableDiffusionProcessing):
             if self.image_mask is not None:
                 if self.inpainting_fill != 1:
                     image = fill(image, latent_mask)
+
+            if opts.img2img_color_correction:
+                self.color_corrections.append(setup_color_correction(image))
 
             image = np.array(image).astype(np.float32) / 255.0
             image = np.moveaxis(image, 2, 0)
@@ -459,7 +491,7 @@ class StableDiffusionProcessingImg2Img(StableDiffusionProcessing):
         if self.image_mask is not None:
             init_mask = latent_mask
             latmask = init_mask.convert('RGB').resize((self.init_latent.shape[3], self.init_latent.shape[2]))
-            latmask = np.moveaxis(np.array(latmask, dtype=np.float64), 2, 0) / 255
+            latmask = np.moveaxis(np.array(latmask, dtype=np.float32), 2, 0) / 255
             latmask = latmask[0]
             latmask = np.around(latmask)
             latmask = np.tile(latmask[None], (4, 1, 1))

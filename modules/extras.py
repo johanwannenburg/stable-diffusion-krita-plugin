@@ -6,12 +6,17 @@ from modules.shared import opts
 import modules.gfpgan_model
 from modules.ui import plaintext_to_html
 import modules.codeformer_model
+import piexif
+import piexif.helper
+
 
 cached_images = {}
 
 
 def run_extras(image, gfpgan_visibility, codeformer_visibility, codeformer_weight, upscaling_resize, extras_upscaler_1, extras_upscaler_2, extras_upscaler_2_visibility):
     devices.torch_gc()
+
+    existing_pnginfo = image.info or {}
 
     image = image.convert("RGB")
     info = ""
@@ -65,14 +70,31 @@ def run_extras(image, gfpgan_visibility, codeformer_visibility, codeformer_weigh
     while len(cached_images) > 2:
         del cached_images[next(iter(cached_images.keys()))]
 
-    images.save_image(image, outpath, "", None, info=info, extension=opts.samples_format, short_filename=True, no_prompt=True, pnginfo_section_name="extras")
+    images.save_image(image, path=outpath, basename="", seed=None, prompt=None, extension=opts.samples_format, info=info, short_filename=True, no_prompt=True, grid=False, pnginfo_section_name="extras", existing_info=existing_pnginfo)
 
     return image, plaintext_to_html(info), ''
 
 
 def run_pnginfo(image):
+    items = image.info
+
+    if "exif" in image.info:
+        exif = piexif.load(image.info["exif"])
+        exif_comment = (exif or {}).get("Exif", {}).get(piexif.ExifIFD.UserComment, b'')
+        try:
+            exif_comment = piexif.helper.UserComment.load(exif_comment)
+        except ValueError:
+            exif_comment = exif_comment.decode('utf8', errors="ignore")
+
+
+        items['exif comment'] = exif_comment
+
+        for field in ['jfif', 'jfif_version', 'jfif_unit', 'jfif_density', 'dpi', 'exif']:
+            del items[field]
+
+
     info = ''
-    for key, text in image.info.items():
+    for key, text in items.items():
         info += f"""
 <div>
 <p><b>{plaintext_to_html(str(key))}</b></p>

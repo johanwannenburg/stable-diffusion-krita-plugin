@@ -23,7 +23,7 @@ app = FastAPI()
 
 
 def load_config():
-    with open("../../krita_config.yaml") as file:
+    with open("krita_config.yaml") as file:
         return yaml.safe_load(file)
 
 
@@ -82,6 +82,7 @@ class Txt2ImgRequest(BaseModel):
     prompt: Optional[str]
     negative_prompt: Optional[str]
     prompt_style: Optional[str]
+    prompt_style2: Optional[str]
     sampler_name: Optional[str]
     steps: Optional[int]
     cfg_scale: Optional[float]
@@ -109,6 +110,7 @@ class Img2ImgRequest(BaseModel):
     prompt: Optional[str]
     negative_prompt: Optional[str]
     prompt_style: Optional[str]
+    prompt_style2: Optional[str]
     sampler_name: Optional[str]
     steps: Optional[int]
     cfg_scale: Optional[float]
@@ -194,6 +196,7 @@ async def f_txt2img(req: Txt2ImgRequest):
         req.prompt or collect_prompt(opt),
         req.negative_prompt or opt['negative_prompt'],
         req.prompt_style or opt['prompt_style'],
+        req.prompt_style2 or opt['prompt_style2'],
         req.steps or opt['steps'],
         sampler_index,
         req.restore_faces or opt['restore_faces'],
@@ -269,6 +272,7 @@ async def f_img2img(req: Img2ImgRequest):
         req.prompt or collect_prompt(opt),
         req.negative_prompt or opt['negative_prompt'],
         req.prompt_style or opt['prompt_style'],
+        req.prompt_style2 or opt['prompt_style2'],
         image,
         {"image": image, "mask": mask},
         mask,
@@ -284,7 +288,7 @@ async def f_img2img(req: Img2ImgRequest):
         req.batch_size or opt['batch_size'],
         req.cfg_scale or opt['cfg_scale'],
         req.denoising_strength or opt['denoising_strength'],
-        req.denoising_strength_change_factor or opt['denoising_strength_change_factor'],
+        # req.denoising_strength_change_factor or opt['denoising_strength_change_factor'],
         seed,
         subseed,
         req.subseed_strength or opt['subseed_strength'],
